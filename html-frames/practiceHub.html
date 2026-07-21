@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Sonar · Practice Mode</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Wix+Madefor+Display:wght@400;500;600;700;800&family=Wix+Madefor+Text:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   SONAR · PRACTICE MODE HUB — single self-contained iframe
+   Lets the player pick any of the 6 games for unlimited,
+   XP-free practice rounds, with a global difficulty selector.
+
+   Restyled to match the hero/stats hub design system (Wix Madefor
+   fonts, purple/pink/lavender palette, white cards on a transparent
+   body) instead of its previous dark-glassmorphism look, so all
+   three Sonar surfaces read as one product. Only the visual layer
+   changed — the message contract, viewport-lock behavior, and game
+   catalog logic below are untouched.
+
+   --- Wiring into Wix (Velo) -------------------------------------
+   The iframe POSTS these messages to the parent:
+     { type:'sonar:ready' }
+     { type:'sonar:quit' }
+       -> wixLocation.to('/sonar-hub')
+     { type:'sonar:launchPractice', game:<slug>, difficulty:'easy|medium|hard' }
+       -> session.setItem('currentGameSession','practice')
+          wixLocation.to(`/${GAME_ROUTES[game]}?session=practice&difficulty=${difficulty}&practice=1`)
+   The iframe LISTENS for config from the parent:
+     { type:'sonar:config', accountLevel:<number> }
+       -> used only to preselect a sensible default difficulty
+          (<25 easy, 25-49 medium, >=50 hard) — the player can
+          still override it with the selector before launching.
+
+   ⚠️ GAME_SLUGS below must match the confirmed real GAME_ROUTES
+   slugs in sonarSession.js (interval→intervalsgame, chords→
+   chordsgame, keyid→keyrecognitiongame, tempo→tempomatchinggame,
+   beatsequencer→beatsequencergame, midireplication→
+   midireplicationgame) — those were placeholders before and are
+   now confirmed; this file doesn't reference routes directly (the
+   parent does the mapping), so nothing to change here, just noting
+   it for whoever wires GAME_ROUTES on the Velo side.
+   ---------------------------------------------------------------- */
+
+:root{
+  --purple:#7224B2;
+  --purple-deep:#2E1954;
+  --purple-deeper:#251142;
+  --pink:#D73F69;
+  --lav-tint:#F3EEFC;
+  --lav-tint2:#EAE0F9;
+  --lav-ink:#6B4FA0;
+  --paper2:#F2F2F1;
+  --black:#0A0A0A;
+  --ink-muted:#8A8A8E;
+  --white:#FFFFFF;
+  --border:#E7E7E5;
+  --radius-lg:20px;
+  --radius-pill:999px;
+
+}
+
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+button{touch-action:manipulation;font-family:inherit;}
+html,body{height:100%;overscroll-behavior:none;}
+body{
+  font-family:'Wix Madefor Text','Wix Madefor Display',sans-serif;
+  color:var(--black);
+  background:transparent;
+  overflow:hidden;
+  user-select:none;
+  -webkit-user-select:none;
+}
+
+#hub{
+  position:relative;z-index:1;
+  height:100vh;
+  height:var(--vh, 100dvh);
+  display:flex;flex-direction:column;
+  padding:clamp(12px,2.2vh,22px) clamp(14px,3vw,40px);
+  padding-bottom:calc(clamp(12px,2.2vh,22px) + env(safe-area-inset-bottom));
+  overflow-y:auto;
+}
+
+/* ===================== TOP BAR ===================== */
+#topbar{
+  display:flex;align-items:center;gap:16px;justify-content:space-between;
+  flex:0 0 auto;
+}
+.brandLogo{
+  height:clamp(38px,4vw,54px);
+  width:auto;
+  display:block;
+}
+.quit{
+  font-family:inherit;font-weight:600;font-size:clamp(12px,1.3vw,14px);
+  color:var(--black);background:var(--paper2);
+  border:none;border-radius:var(--radius-pill);padding:11px 22px;cursor:pointer;
+  transition:background .15s ease, transform .12s ease;
+}
+.quit:hover{background:var(--lav-tint2);transform:translateY(-1px);}
+.quit:active{transform:translateY(0);}
+
+/* ===================== HEADER / BADGE ===================== */
+#heading{
+  flex:0 0 auto;
+  text-align:center;
+  padding:clamp(14px,2.6vh,26px) 0 clamp(6px,1.2vh,12px);
+}
+.eyebrow{
+  font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink-muted);
+  margin-bottom:8px;
+}
+#heading h1{
+  font-family:'Wix Madefor Display',sans-serif;
+  font-size:clamp(22px,3vw,32px);font-weight:800;letter-spacing:-.3px;
+}
+#heading p{
+  margin-top:8px;font-size:clamp(13px,1.4vw,15px);color:#5A5A5C;font-weight:500;
+}
+#noXpBadge{
+  display:inline-flex;align-items:center;gap:7px;
+  margin-top:14px;
+  padding:7px 16px;border-radius:var(--radius-pill);
+  background:var(--lav-tint);
+  font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--lav-ink);
+}
+#noXpBadge .dot{width:6px;height:6px;border-radius:50%;background:var(--pink);flex:0 0 auto;}
+
+/* ===================== DIFFICULTY SELECTOR ===================== */
+#difficultyRow{
+  flex:0 0 auto;
+  display:flex;justify-content:center;align-items:center;gap:8px;
+  margin:clamp(8px,1.6vh,16px) 0 clamp(14px,2.4vh,22px);
+  flex-wrap:wrap;
+}
+.diffLabel{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-muted);margin-right:4px;}
+.diffBtn{
+  font-family:inherit;font-weight:700;font-size:13px;color:var(--black);
+  background:var(--paper2);border:none;
+  border-radius:var(--radius-pill);padding:8px 18px;cursor:pointer;
+  transition:background .2s ease, color .2s ease, box-shadow .2s ease, transform .12s ease;
+}
+.diffBtn:hover{transform:translateY(-1px);background:var(--lav-tint2);}
+.diffBtn.active{
+  background:linear-gradient(135deg,var(--pink),var(--purple));
+  color:#fff;box-shadow:0 6px 16px rgba(114,36,178,.28);
+}
+.diffBtn.active:hover{background:linear-gradient(135deg,var(--pink),var(--purple));}
+
+/* ===================== GAME GRID ===================== */
+#grid{
+  flex:1 1 auto;
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:clamp(12px,1.6vw,20px);
+  max-width:1080px;
+  width:100%;
+  margin:0 auto;
+  align-content:start;
+  padding-bottom:8px;
+}
+
+/* Base tile — same shape/behavior as the session picker's cards, just
+   without any single tile forced to be "the big one" since all six
+   games are equally valid choices here. */
+.card{
+  position:relative;
+  overflow:hidden;
+  border:none;
+  border-radius:var(--radius-lg);
+  padding:clamp(18px,2.4vh,22px) clamp(16px,1.8vw,20px);
+  display:flex;flex-direction:column;align-items:flex-start;text-align:left;
+  cursor:pointer;
+  transition:transform .18s ease, box-shadow .2s ease;
+}
+.card:hover{transform:translateY(-3px);box-shadow:0 14px 28px rgba(10,10,10,.16);}
+.card:active{transform:translateY(-1px) scale(.99);}
+
+.blob{position:absolute;border-radius:50%;filter:blur(34px);pointer-events:none;z-index:0;}
+
+.cardIcon,.cardInfo,.cardCta{position:relative;z-index:1;}
+
+.cardIcon{
+  width:40px;height:40px;border-radius:11px;
+  display:flex;align-items:center;justify-content:center;
+  margin-bottom:14px;flex:0 0 auto;
+}
+.cardIcon svg{width:20px;height:20px;}
+
+.cardEyebrow{font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;margin-bottom:3px;}
+.cardTitle{font-family:'Wix Madefor Display',sans-serif;font-weight:700;font-size:15.5px;}
+.cardDesc{margin-top:4px;font-size:12px;font-weight:500;line-height:1.45;}
+
+.cardCta{
+  margin-top:14px;align-self:flex-start;
+  display:flex;align-items:center;gap:5px;
+  font-size:11.5px;font-weight:700;
+  border-radius:var(--radius-pill);padding:7px 15px;white-space:nowrap;
+}
+.cardCta svg{width:8px;height:8px;transition:transform .18s ease;}
+.card:hover .cardCta svg{transform:translateX(3px);}
+
+/* Fundamentals — core listening skills (Interval, Chords, Tempo).
+   Reuses the Full Session gradient + corner-glow blobs. */
+.card.cat-fundamentals{background:radial-gradient(120% 130% at 20% 10%, #ff6b8a 0%, #8349c5 30%, #2f2c58 55%, var(--purple-deeper) 100%);}
+.card.cat-fundamentals .blob:nth-child(1){width:120px;height:120px;top:-40px;right:-30px;background:rgba(255,107,138,.5);}
+.card.cat-fundamentals .blob:nth-child(2){width:100px;height:100px;bottom:-40px;left:-25px;background:rgba(114,36,178,.45);}
+.card.cat-fundamentals .cardIcon{background:rgba(255,255,255,.2);color:#fff;}
+.card.cat-fundamentals .cardEyebrow{color:rgba(255,255,255,.7);}
+.card.cat-fundamentals .cardTitle{color:#fff;}
+.card.cat-fundamentals .cardDesc{color:rgba(255,255,255,.78);}
+.card.cat-fundamentals .cardCta{background:#fff;color:var(--purple-deep);}
+
+/* Studio Skills — applying those fundamentals in a practical, DAW-style
+   context (MIDI Replication, Beat Sequencer, Key Identification). Same
+   4-stop radial structure as Fundamentals (bright origin → mid tone →
+   dark tone → deepest anchor, same 0/30/55/100 stops, same 20%/10%
+   origin) so the two read as siblings — recolored into a darker,
+   redder orange (burnt red-orange → near-black) rather than gold, for
+   more separation from Fundamentals' pink/purple. Same blob-glow
+   weight as Fundamentals since these two categories are co-equal, not
+   a hierarchy. */
+.card.cat-studio{background:radial-gradient(120% 130% at 20% 10%, #E8542A 0%, #B8391C 30%, #5C2210 55%, #1F0F08 100%);}
+.card.cat-studio .blob:nth-child(1){width:120px;height:120px;top:-40px;right:-30px;background:rgba(232,84,42,.4);}
+.card.cat-studio .blob:nth-child(2){width:100px;height:100px;bottom:-40px;left:-25px;background:rgba(184,57,28,.4);}
+.card.cat-studio .cardIcon{background:rgba(255,255,255,.16);color:#fff;}
+.card.cat-studio .cardEyebrow{color:rgba(255,255,255,.65);}
+.card.cat-studio .cardTitle{color:#fff;}
+.card.cat-studio .cardDesc{color:rgba(255,255,255,.72);}
+.card.cat-studio .cardCta{background:#fff;color:#8A3216;}
+
+/* ===================== RESPONSIVE ===================== */
+@media (max-width:900px){
+  #grid{grid-template-columns:repeat(2, 1fr);}
+}
+@media (max-width:560px){
+  #grid{grid-template-columns:1fr;gap:10px;}
+  .card{flex-direction:row;align-items:center;padding:14px 16px;gap:12px;}
+  .cardIcon{width:36px;height:36px;margin-bottom:0;}
+  .cardIcon svg{width:17px;height:17px;}
+  .cardInfo{flex:1 1 auto;min-width:0;}
+  .cardDesc{display:none;}
+  .cardCta{margin-top:0;flex:0 0 auto;padding:6px 13px;font-size:10.5px;}
+  #heading{padding-top:8px;}
+  #topbar{gap:8px;}
+}
+@media (max-width:400px){
+  .quit{padding:9px 16px;font-size:12px;}
+}
+</style>
+</head>
+<body>
+<div id="hub">
+
+  <!-- ===== TOP BAR ===== -->
+  <header id="topbar">
+    <img class="brandLogo" src="https://static.wixstatic.com/media/c0727a_803b953c9c264bbba9b689c156c3593d~mv2.png" alt="Sonar by Sinko" />
+    <button class="quit" id="btnQuit">Back to Hub</button>
+  </header>
+
+  <!-- ===== HEADING ===== -->
+  <div id="heading">
+    <p class="eyebrow">Practice</p>
+    <h1>Practice Mode</h1>
+    <p>Pick a game. Play as many rounds as you want, whenever you want.</p>
+    <div id="noXpBadge"><span class="dot"></span>No XP earned in practice</div>
+  </div>
+
+  <!-- ===== DIFFICULTY SELECTOR ===== -->
+  <div id="difficultyRow">
+    <span class="diffLabel">Difficulty</span>
+    <button class="diffBtn" data-diff="easy">Easy</button>
+    <button class="diffBtn active" data-diff="medium">Medium</button>
+    <button class="diffBtn" data-diff="hard">Hard</button>
+  </div>
+
+  <!-- ===== GAME GRID ===== -->
+  <div id="grid"><!-- injected by JS --></div>
+</div>
+
+<script>
+/* ============================================================
+   VIEWPORT HEIGHT LOCK (same fix used across all Sonar games)
+   ============================================================ */
+function lockViewportHeight(){
+  const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  document.documentElement.style.setProperty('--vh', h + 'px');
+}
+lockViewportHeight();
+window.addEventListener('resize', lockViewportHeight);
+window.addEventListener('orientationchange', lockViewportHeight);
+if (window.visualViewport){
+  window.visualViewport.addEventListener('resize', lockViewportHeight);
+  window.visualViewport.addEventListener('scroll', lockViewportHeight);
+}
+
+/* ============================================================
+   GAME CATALOG
+   `slug` is the game id sent to the parent — the parent maps it
+   to an actual Wix route (see GAME_ROUTES note in the Velo file).
+   `cat` drives the visual accent (fundamentals / studio).
+   ============================================================ */
+const GAMES = [
+  {
+    slug: "interval",
+    cat: "fundamentals",
+    title: "Interval Recognition",
+    desc: "Identify the distance between two notes by ear.",
+    tag: "Fundamentals",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="6" cy="12" r="3" fill="#fff"/><circle cx="18" cy="12" r="3" fill="#fff" opacity=".55"/><path d="M9 12h6" stroke="#fff" stroke-width="1.6" stroke-dasharray="2 2"/></svg>`
+  },
+  {
+    slug: "chords",
+    cat: "fundamentals",
+    title: "Chords",
+    desc: "Recognize chord qualities from a single voicing.",
+    tag: "Fundamentals",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><rect x="5" y="14" width="3" height="6" rx="1" fill="#fff"/><rect x="10.5" y="9" width="3" height="11" rx="1" fill="#fff" opacity=".8"/><rect x="16" y="5" width="3" height="15" rx="1" fill="#fff" opacity=".55"/></svg>`
+  },
+  {
+    slug: "tempo",
+    cat: "fundamentals",
+    title: "Tempo Matching",
+    desc: "Listen to a beat, then tap it back at the same speed.",
+    tag: "Fundamentals",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><circle cx="6" cy="12" r="2.2" fill="#fff"/><circle cx="10.7" cy="12" r="2.2" fill="#fff" opacity=".7"/><circle cx="15.4" cy="12" r="2.2" fill="#fff" opacity=".45"/><circle cx="20" cy="12" r="2.2" fill="#fff" opacity=".25"/></svg>`
+  },
+  {
+    slug: "midireplication",
+    cat: "studio",
+    title: "MIDI Replication",
+    desc: "Hear a short phrase, then play it back yourself.",
+    tag: "Studio Skills",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="12" rx="1.5" stroke="#fff" stroke-width="1.4"/><path d="M7 6v12M11 6v12M15 6v12M19 6v7" stroke="#fff" stroke-width="1.2" opacity=".6"/></svg>`
+  },
+  {
+    slug: "beatsequencer",
+    cat: "studio",
+    title: "Beat Sequencer",
+    desc: "Rebuild a rhythmic pattern on the step grid.",
+    tag: "Studio Skills",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="4" height="4" rx="1" fill="#fff"/><rect x="10" y="4" width="4" height="4" rx="1" fill="#fff" opacity=".4"/><rect x="16" y="4" width="4" height="4" rx="1" fill="#fff"/><rect x="4" y="10" width="4" height="4" rx="1" fill="#fff" opacity=".4"/><rect x="10" y="10" width="4" height="4" rx="1" fill="#fff"/><rect x="16" y="10" width="4" height="4" rx="1" fill="#fff" opacity=".4"/></svg>`
+  },
+  {
+    slug: "keyid",
+    cat: "studio",
+    title: "Key Identification",
+    desc: "Figure out the key center of a short progression.",
+    tag: "Studio Skills",
+    icon: `<svg viewBox="0 0 24 24" fill="none"><path d="M9 15a3 3 0 1 1 0-6 3 3 0 0 1 0 6z" stroke="#fff" stroke-width="1.6"/><path d="M11.5 11 19 4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/><path d="M16 6.5 19 4l1.5 1.5" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+  }
+];
+
+let selectedDifficulty = "medium";
+
+/* ============================================================
+   BUILD GRID
+   ============================================================ */
+const elGrid = document.getElementById("grid");
+GAMES.forEach(g=>{
+  const card = document.createElement("button");
+  card.className = "card cat-" + g.cat;
+  card.dataset.slug = g.slug;
+  card.innerHTML = `
+    <div class="blob"></div><div class="blob"></div>
+    <div class="cardIcon">${g.icon}</div>
+    <div class="cardInfo">
+      <p class="cardEyebrow">${g.tag}</p>
+      <div class="cardTitle">${g.title}</div>
+      <div class="cardDesc">${g.desc}</div>
+    </div>
+    <div class="cardCta">Practice
+      <svg viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6.5 2.5 10 6l-3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>`;
+  card.addEventListener("click", ()=> launchPractice(g.slug));
+  elGrid.appendChild(card);
+});
+
+/* ============================================================
+   DIFFICULTY SELECTOR
+   ============================================================ */
+document.querySelectorAll(".diffBtn").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".diffBtn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    selectedDifficulty = btn.dataset.diff;
+  });
+});
+
+function levelToDifficulty(lvl){
+  if (lvl == null) return null;
+  if (lvl < 25) return "easy";
+  if (lvl < 50) return "medium";
+  return "hard";
+}
+function preselectDifficulty(diff){
+  if (!diff) return;
+  selectedDifficulty = diff;
+  document.querySelectorAll(".diffBtn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.diff === diff);
+  });
+}
+
+/* ============================================================
+   PARENT MESSAGING
+   ============================================================ */
+function post(msg){ try { window.parent.postMessage(msg, "*"); } catch(e){} }
+
+function launchPractice(slug){
+  post({ type:"sonar:launchPractice", game: slug, difficulty: selectedDifficulty });
+}
+
+document.getElementById("btnQuit").addEventListener("click", ()=>{
+  post({ type:"sonar:quit" });
+});
+
+window.addEventListener("message", (e)=>{
+  const d = e.data;
+  if (!d || typeof d !== "object") return;
+  if (d.type === "sonar:config"){
+    const fromLevel = levelToDifficulty(d.accountLevel);
+    if (fromLevel) preselectDifficulty(fromLevel);
+  }
+});
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+post({ type:"sonar:ready" });
+</script>
+</body>
+</html>
